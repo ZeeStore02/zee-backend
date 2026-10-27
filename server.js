@@ -52,15 +52,16 @@ app.post('/api/create-qris', async (req, res) => {
     try {
         const response = await axios.post('https://sandbox.duitku.com/webapi/api/merchant/v2/inquiry', payload);
         
+        // Kirim paymentUrl & qrCodeUrl
         res.json({
             success: true,
-            qr_url: response.data.qrCodeUrl || response.data.paymentUrl,
+            paymentUrl: response.data.paymentUrl || response.data.qrCodeUrl,
             merchantOrderId: merchantOrderId
         });
     } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+        res.status(500).json({ success: false, message: err.response ? JSON.stringify(err.response.data) : err.message });
     }
-});
+
 
 // 2. CALLBACK OTOMATIS DUITKU
 app.post('/api/callback', async (req, res) => {
