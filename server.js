@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const cors = require('cors');
 const app = express();
 
+// WAJIB: Biar tidak diblokir oleh browser saat diakses dari GitHub Pages
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -12,9 +14,14 @@ const FIREBASE_URL = "https://token-pengguna-default-rtdb.asia-southeast1.fireba
 const MERCHANT_CODE = "DS37162"; 
 const API_KEY = "83bf3084dc5e8a53723ec9fcfbcfab4b"; 
 
-// 1. ENDPOINT BUAT TRANSAKSI QRIS (Dipanggil saat pembeli klik Bayar)
+// ROUTE HALAMAN UTAMA (Biar gak "Cannot GET /")
+app.get('/', (req, res) => {
+    res.send("Server ZEE STORE Backend Aktif!");
+});
+
+// 1. ENDPOINT BUAT TRANSAKSI QRIS
 app.post('/api/create-qris', async (req, res) => {
-    const { amount } = req.body; // Nominal (10000, 20000, dst)
+    const { amount } = req.body;
 
     if (!amount || amount < 10000) {
         return res.status(400).json({ success: false, message: "Nominal minimal Rp 10.000" });
@@ -23,7 +30,6 @@ app.post('/api/create-qris', async (req, res) => {
     const merchantOrderId = "ZEE-" + Date.now();
     const paymentAmount = parseInt(amount);
 
-    // Signature Request Duitku (MD5)
     const signature = crypto.createHash('md5')
                             .update(MERCHANT_CODE + merchantOrderId + paymentAmount + API_KEY)
                             .digest('hex');
@@ -31,13 +37,13 @@ app.post('/api/create-qris', async (req, res) => {
     const payload = {
         merchantCode: MERCHANT_CODE,
         paymentAmount: paymentAmount,
-        paymentMethod: 'SP', // Code 'SP' = QRIS ShopeePay/All QRIS
+        paymentMethod: 'SP',
         merchantOrderId: merchantOrderId,
         productDetails: `Token Premium (${paymentAmount / 10000} Bulan)`,
         customerVaName: 'Pembeli Zee Store',
         email: 'customer@zeestore.com',
         phoneNumber: '081330549762',
-        callbackUrl: 'https://zeestore02.github.io/', // Nanti ganti jika backend sudah di-deploy
+        callbackUrl: 'https://zee-backend-black.vercel.app/api/callback',
         returnUrl: 'https://zeestore02.github.io/',
         signature: signature,
         expiryPeriod: 60
@@ -56,11 +62,10 @@ app.post('/api/create-qris', async (req, res) => {
     }
 });
 
-// 2. CALLBACK OTOMATIS (Mendengar status lunas dari Duitku -> Simpan Token ke Firebase)
+// 2. CALLBACK OTOMATIS DUITKU
 app.post('/api/callback', async (req, res) => {
     const { merchantCode, amount, merchantOrderId, resultMap, signature } = req.body;
 
-    // Verifikasi Keamanan Signature Callback
     const calcSignature = crypto.createHash('md5')
                                 .update(merchantCode + amount + merchantOrderId + API_KEY)
                                 .digest('hex');
@@ -69,17 +74,15 @@ app.post('/api/callback', async (req, res) => {
         return res.status(400).send('Invalid Signature');
     }
 
-    // Status '00' = Pembayaran LUNAS
     if (resultMap === '00') {
         const nominal = parseInt(amount);
         const kelipatan = Math.floor(nominal / 10000);
-        const totalHari = kelipatan * 30; // 10k = 30 hari, 20k = 60 hari
+        const totalHari = kelipatan * 30;
 
         const expDate = new Date();
         expDate.setDate(expDate.getDate() + totalHari);
         const expiredFormatted = expDate.toISOString().split('T')[0];
 
-        // Buat Nama Token Acak (Contoh: ZEE_PA89X)
         const tokenName = "ZEE_P" + Math.random().toString(36).substring(2, 7).toUpperCase();
 
         try {
@@ -97,7 +100,7 @@ app.post('/api/callback', async (req, res) => {
     res.status(200).send('OK');
 });
 
-// 3. ENDPOINT KLAIM TOKEN FREE (12 Hari, Batas 1 Device/Bulan)
+// 3. ENDPOINT KLAIM TOKEN FREE
 app.post('/api/claim-free', async (req, res) => {
     const { deviceId } = req.body;
 
@@ -106,7 +109,6 @@ app.post('/api/claim-free', async (req, res) => {
     }
 
     try {
-        // Cek apakah Device ID ini sudah pernah klaim
         const checkRes = await axios.get(`${FIREBASE_URL}/free_claims/${deviceId}.json`);
         const claimData = checkRes.data;
 
@@ -119,18 +121,16 @@ app.post('/api/claim-free', async (req, res) => {
             if (diffDays < 30) {
                 return res.status(400).json({ 
                     success: false, 
-                    message: `Device ini sudah klaim! Silakan tunggu ${30 - diffDays} hari lagi.` 
+                    message: `Device ini sudah klaim! Tunggu ${30 - diffDays} hari lagi.` 
                 });
             }
         }
 
-        // Generate Token Free 12 Hari
         const expDate = new Date();
         expDate.setDate(expDate.getDate() + 12);
         const expiredFormatted = expDate.toISOString().split('T')[0];
         const tokenFreeName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 6).toUpperCase();
 
-        // Simpan token ke /tokens & catat device ID ke /free_claims
         await axios.put(`${FIREBASE_URL}/tokens/${tokenFreeName}.json`, {
             status: "free",
             expired: expiredFormatted
@@ -152,4 +152,4 @@ app.post('/api/claim-free', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server ZEE STORE aktif di port ${PORT}`));
+app.listen(PORT, () => console.log(`Server ZEE STORE aktif`));
