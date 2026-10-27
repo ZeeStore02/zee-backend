@@ -1,10 +1,10 @@
 const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
-const cors = require('cors'); // Wajib
+const cors = require('cors');
 const app = express();
 
-app.use(cors()); // Wajib biar bisa dipanggil dari GitHub Pages
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -30,7 +30,7 @@ app.post('/api/create-qris', async (req, res) => {
     const payload = {
         merchantCode: MERCHANT_CODE,
         paymentAmount: paymentAmount,
-        paymentMethod: 'SP',
+        paymentMethod: 'VC', // DIUBAH DARI 'SP' KE 'VC' AGAR MATCH DI SANDBOX
         merchantOrderId: merchantOrderId,
         productDetails: `Token Premium (${paymentAmount / 10000} Bulan)`,
         customerVaName: 'Pembeli Zee Store',
@@ -44,13 +44,26 @@ app.post('/api/create-qris', async (req, res) => {
 
     try {
         const response = await axios.post('https://sandbox.duitku.com/webapi/api/merchant/v2/inquiry', payload);
-        res.json({
-            success: true,
-            paymentUrl: response.data.paymentUrl || response.data.qrCodeUrl,
-            merchantOrderId: merchantOrderId
-        });
+        
+        if (response.data.paymentUrl || response.data.qrCodeUrl) {
+            return res.json({
+                success: true,
+                paymentUrl: response.data.paymentUrl || response.data.qrCodeUrl,
+                merchantOrderId: merchantOrderId
+            });
+        } else {
+            return res.status(400).json({
+                success: false,
+                message: response.data.statusMessage || "Duitku menolak transaksi."
+            });
+        }
     } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+        // MENAMPILKAN ERROR ASLI DARI DUITKU IF ANY
+        const detailedMessage = err.response && err.response.data && err.response.data.statusMessage 
+            ? err.response.data.statusMessage 
+            : err.message;
+
+        return res.status(500).json({ success: false, message: detailedMessage });
     }
 });
 
