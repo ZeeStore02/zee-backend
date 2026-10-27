@@ -1,6 +1,5 @@
 const express = require('express');
 const axios = require('axios');
-const crypto = require('crypto');
 const cors = require('cors');
 const app = express();
 
@@ -9,91 +8,43 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const FIREBASE_URL = "https://token-pengguna-default-rtdb.asia-southeast1.firebasedatabase.app";
-const MERCHANT_CODE = "DS37162"; 
-const API_KEY = "83bf3084dc5e8a53723ec9fcfbcfab4b"; 
 
 app.get('/', (req, res) => {
-    res.send("Server ZEE STORE Backend Aktif!");
+    res.send("Server ZEE STORE Backend Saweria Aktif!");
 });
 
-app.post('/api/create-qris', async (req, res) => {
-    const { amount } = req.body;
-    if (!amount || amount < 10000) return res.status(400).json({ success: false, message: "Nominal minimal Rp 10.000" });
-
-    const merchantOrderId = "ZEE-" + Date.now();
-    const paymentAmount = parseInt(amount);
-
-    const signature = crypto.createHash('md5')
-                            .update(MERCHANT_CODE + merchantOrderId + paymentAmount + API_KEY)
-                            .digest('hex');
-
-    const payload = {
-        merchantCode: MERCHANT_CODE,
-        paymentAmount: paymentAmount,
-        paymentMethod: 'VC', // DIUBAH DARI 'SP' KE 'VC' AGAR MATCH DI SANDBOX
-        merchantOrderId: merchantOrderId,
-        productDetails: `Token Premium (${paymentAmount / 10000} Bulan)`,
-        customerVaName: 'Pembeli Zee Store',
-        email: 'customer@zeestore.com',
-        phoneNumber: '081330549762',
-        callbackUrl: 'https://zee-backend-black.vercel.app/api/callback',
-        returnUrl: 'https://zeestore02.github.io/',
-        signature: signature,
-        expiryPeriod: 60
-    };
-
+// WEBHOOK SAWERIA OTOMATIS
+app.post('/api/saweria-webhook', async (req, res) => {
     try {
-        const response = await axios.post('https://sandbox.duitku.com/webapi/api/merchant/v2/inquiry', payload);
-        
-        if (response.data.paymentUrl || response.data.qrCodeUrl) {
-            return res.json({
-                success: true,
-                paymentUrl: response.data.paymentUrl || response.data.qrCodeUrl,
-                merchantOrderId: merchantOrderId
-            });
-        } else {
-            return res.status(400).json({
-                success: false,
-                message: response.data.statusMessage || "Duitku menolak transaksi."
-            });
-        }
-    } catch (err) {
-        // MENAMPILKAN ERROR ASLI DARI DUITKU IF ANY
-        const detailedMessage = err.response && err.response.data && err.response.data.statusMessage 
-            ? err.response.data.statusMessage 
-            : err.message;
+        const { amount_raw, donator_name } = req.body;
+        const nominal = parseInt(amount_raw);
 
-        return res.status(500).json({ success: false, message: detailedMessage });
-    }
-});
+        // Minimal pembayaran Rp 10.000 (Kelipatan 10rb = 30 Hari)
+        if (nominal >= 10000) {
+            const totalHari = Math.floor(nominal / 10000) * 30;
+            const expDate = new Date();
+            expDate.setDate(expDate.getDate() + totalHari);
 
-app.post('/api/callback', async (req, res) => {
-    const { merchantCode, amount, merchantOrderId, resultMap, signature } = req.body;
-    const calcSignature = crypto.createHash('md5').update(merchantCode + amount + merchantOrderId + API_KEY).digest('hex');
+            const tokenName = "ZEE_P" + Math.random().toString(36).substring(2, 7).toUpperCase();
 
-    if (signature !== calcSignature) return res.status(400).send('Invalid Signature');
-
-    if (resultMap === '00') {
-        const nominal = parseInt(amount);
-        const totalHari = Math.floor(nominal / 10000) * 30;
-        const expDate = new Date();
-        expDate.setDate(expDate.getDate() + totalHari);
-
-        const tokenName = "ZEE_P" + Math.random().toString(36).substring(2, 7).toUpperCase();
-
-        try {
+            // Simpan token baru ke Firebase Database
             await axios.put(`${FIREBASE_URL}/tokens/${tokenName}.json`, {
                 status: "premium",
-                expired: expDate.toISOString().split('T')[0]
+                expired: expDate.toISOString().split('T')[0],
+                buyer: donator_name || "Pembeli Saweria"
             });
-            return res.status(200).send('OK');
-        } catch (error) {
-            return res.status(500).send('Database Error');
+
+            console.log(`[SAWERIA SUCCESS] Token ${tokenName} berhasil dibuat untuk ${donator_name}`);
         }
+
+        return res.status(200).json({ status: "success" });
+    } catch (error) {
+        console.error("Saweria Webhook Error:", error.message);
+        return res.status(500).send("Internal Server Error");
     }
-    res.status(200).send('OK');
 });
 
+// ENDPOINT KLAIM TOKEN FREE (TETAP SAMA)
 app.post('/api/claim-free', async (req, res) => {
     const { deviceId } = req.body;
     if (!deviceId) return res.status(400).json({ success: false, message: "Device ID tidak ditemukan!" });
