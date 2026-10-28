@@ -66,7 +66,7 @@ app.post('/api/check-token', async (req, res) => {
     }
 });
 
-// ENDPOINT KLAIM FREE (Disesuaikan agar menampilkan token lama saat ditolak 30 hari)
+// ENDPOINT KLAIM FREE (Fix untuk data lama & data baru)
 app.post('/api/claim-free', async (req, res) => {
     const { deviceId } = req.body;
     if (!deviceId) return res.status(400).json({ success: false, message: "Device ID tidak ditemukan!" });
@@ -75,29 +75,50 @@ app.post('/api/claim-free', async (req, res) => {
         const checkRes = await axios.get(`${FIREBASE_URL}/free_claims/${deviceId}.json`);
         const now = new Date();
 
-        // 1. Jika deviceId sudah ada dan belum lewat 30 hari
         if (checkRes.data && checkRes.data.last_claimed) {
             const diffDays = Math.floor((now - new Date(checkRes.data.last_claimed)) / (1000 * 60 * 60 * 24));
             
             if (diffDays < 30) {
-                // Kembalikan token lama dan status isAlreadyClaimed: true
+                let savedToken = checkRes.data.token;
+                let savedExpired = checkRes.data.expired;
+
+                // JIKA DATA LAMA (belum ada field token di free_claims):
+                if (!savedToken) {
+                    // Cari token dari daftar /tokens/ yang berstatus "free"
+                    const allTokensRes = await axios.get(`${FIREBASE_URL}/tokens.json`);
+                    if (allTokensRes.data) {
+                        const freeTokens = Object.entries(allTokensRes.data).filter(([key, val]) => val.status === "free");
+                        if (freeTokens.length > 0) {
+                            // Ambil token free terakhir
+                            const lastToken = freeTokens[freeTokens.length - 1];
+                            savedToken = lastToken[0];
+                            savedExpired = lastToken[1].expired;
+
+                            // Update balik ke /free_claims/ biar data selanjutnya lengkap
+                            await axios.patch(`${FIREBASE_URL}/free_claims/${deviceId}.json`, {
+                                token: savedToken,
+                                expired: savedExpired
+                            });
+                        }
+                    }
+                }
+
                 return res.json({
                     success: true,
                     isAlreadyClaimed: true,
-                    token: checkRes.data.token || "Klaim Aktif",
-                    expired: checkRes.data.expired || "Terdaftar",
+                    token: savedToken || "ZEE_FREE_OLD",
+                    expired: savedExpired || "12 Hari",
                     message: `Sudah klaim! Tunggu ${30 - diffDays} hari lagi.`
                 });
             }
         }
 
-        // 2. Jika belum pernah klaim ATAU sudah lewat 30 hari
+        // KLAIM BARU (Jika belum pernah klaim atau sudah > 30 hari)
         const expDate = new Date();
         expDate.setDate(expDate.getDate() + 12);
         const expiredFormatted = expDate.toISOString().split('T')[0];
         const tokenFreeName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 6).toUpperCase();
 
-        // Simpan token baru ke node /tokens/ dan simpan detail klaim + token ke node /free_claims/
         await axios.put(`${FIREBASE_URL}/tokens/${tokenFreeName}.json`, { 
             status: "free", 
             expired: expiredFormatted 
