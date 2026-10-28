@@ -66,58 +66,51 @@ app.post('/api/check-token', async (req, res) => {
     }
 });
 
-// ENDPOINT KLAIM FREE (Fix untuk data lama & data baru)
+// ENDPOINT KLAIM FREE (Masa Aktif Token 12 Hari, Batas Klaim 30 Hari)
 app.post('/api/claim-free', async (req, res) => {
-    const { deviceId } = req.body;
+    const { deviceId, savedToken } = req.body;
     if (!deviceId) return res.status(400).json({ success: false, message: "Device ID tidak ditemukan!" });
 
     try {
         const checkRes = await axios.get(`${FIREBASE_URL}/free_claims/${deviceId}.json`);
         const now = new Date();
 
+        // 1. CEK BATASAN KLAIM 1X SEBULAN (30 HARI)
         if (checkRes.data && checkRes.data.last_claimed) {
             const diffDays = Math.floor((now - new Date(checkRes.data.last_claimed)) / (1000 * 60 * 60 * 24));
             
-            if (diffDays < 30) {
-                let savedToken = checkRes.data.token;
+            if (diffDays < 30) { // Batas klaim tetap 30 hari
+                let savedTokenName = checkRes.data.token || savedToken;
                 let savedExpired = checkRes.data.expired;
 
-                // JIKA DATA LAMA (belum ada field token di free_claims):
-                if (!savedToken) {
-                    // Cari token dari daftar /tokens/ yang berstatus "free"
-                    const allTokensRes = await axios.get(`${FIREBASE_URL}/tokens.json`);
-                    if (allTokensRes.data) {
-                        const freeTokens = Object.entries(allTokensRes.data).filter(([key, val]) => val.status === "free");
-                        if (freeTokens.length > 0) {
-                            // Ambil token free terakhir
-                            const lastToken = freeTokens[freeTokens.length - 1];
-                            savedToken = lastToken[0];
-                            savedExpired = lastToken[1].expired;
+                // Jika data token lama belum ada, buatkan otomatis
+                if (!savedTokenName) {
+                    savedTokenName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 7).toUpperCase();
+                    
+                    // Hitung expired 12 hari dari saat pertama kali klaim
+                    const expDate = new Date(checkRes.data.last_claimed);
+                    expDate.setDate(expDate.getDate() + 12);
+                    savedExpired = expDate.toISOString().split('T')[0];
 
-                            // Update balik ke /free_claims/ biar data selanjutnya lengkap
-                            await axios.patch(`${FIREBASE_URL}/free_claims/${deviceId}.json`, {
-                                token: savedToken,
-                                expired: savedExpired
-                            });
-                        }
-                    }
+                    await axios.put(`${FIREBASE_URL}/tokens/${savedTokenName}.json`, { status: "free", expired: savedExpired });
+                    await axios.patch(`${FIREBASE_URL}/free_claims/${deviceId}.json`, { token: savedTokenName, expired: savedExpired });
                 }
 
                 return res.json({
                     success: true,
                     isAlreadyClaimed: true,
-                    token: savedToken || "ZEE_FREE_OLD",
-                    expired: savedExpired || "12 Hari",
-                    message: `Sudah klaim! Tunggu ${30 - diffDays} hari lagi.`
+                    token: savedTokenName,
+                    expired: savedExpired,
+                    message: `Sudah klaim! Tunggu ${30 - diffDays} hari lagi untuk klaim berikutnya.`
                 });
             }
         }
 
-        // KLAIM BARU (Jika belum pernah klaim atau sudah > 30 hari)
+        // 2. KLAIM BARU (MASA AKTIF TOKEN 12 HARI)
         const expDate = new Date();
-        expDate.setDate(expDate.getDate() + 12);
+        expDate.setDate(expDate.getDate() + 12); // Token aktif 12 hari
         const expiredFormatted = expDate.toISOString().split('T')[0];
-        const tokenFreeName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 6).toUpperCase();
+        const tokenFreeName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 7).toUpperCase();
 
         await axios.put(`${FIREBASE_URL}/tokens/${tokenFreeName}.json`, { 
             status: "free", 
@@ -140,7 +133,6 @@ app.post('/api/claim-free', async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 });
-
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT);
