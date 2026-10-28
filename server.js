@@ -66,7 +66,7 @@ app.post('/api/check-token', async (req, res) => {
     }
 });
 
-// ENDPOINT KLAIM FREE (Tetap Sama)
+// ENDPOINT KLAIM FREE (Disesuaikan agar menampilkan token lama saat ditolak 30 hari)
 app.post('/api/claim-free', async (req, res) => {
     const { deviceId } = req.body;
     if (!deviceId) return res.status(400).json({ success: false, message: "Device ID tidak ditemukan!" });
@@ -75,24 +75,51 @@ app.post('/api/claim-free', async (req, res) => {
         const checkRes = await axios.get(`${FIREBASE_URL}/free_claims/${deviceId}.json`);
         const now = new Date();
 
+        // 1. Jika deviceId sudah ada dan belum lewat 30 hari
         if (checkRes.data && checkRes.data.last_claimed) {
             const diffDays = Math.floor((now - new Date(checkRes.data.last_claimed)) / (1000 * 60 * 60 * 24));
-            if (diffDays < 30) return res.status(400).json({ success: false, message: `Sudah klaim! Tunggu ${30 - diffDays} hari lagi.` });
+            
+            if (diffDays < 30) {
+                // Kembalikan token lama dan status isAlreadyClaimed: true
+                return res.json({
+                    success: true,
+                    isAlreadyClaimed: true,
+                    token: checkRes.data.token || "Klaim Aktif",
+                    expired: checkRes.data.expired || "Terdaftar",
+                    message: `Sudah klaim! Tunggu ${30 - diffDays} hari lagi.`
+                });
+            }
         }
 
+        // 2. Jika belum pernah klaim ATAU sudah lewat 30 hari
         const expDate = new Date();
         expDate.setDate(expDate.getDate() + 12);
         const expiredFormatted = expDate.toISOString().split('T')[0];
         const tokenFreeName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 6).toUpperCase();
 
-        await axios.put(`${FIREBASE_URL}/tokens/${tokenFreeName}.json`, { status: "free", expired: expiredFormatted });
-        await axios.put(`${FIREBASE_URL}/free_claims/${deviceId}.json`, { last_claimed: now.toISOString() });
+        // Simpan token baru ke node /tokens/ dan simpan detail klaim + token ke node /free_claims/
+        await axios.put(`${FIREBASE_URL}/tokens/${tokenFreeName}.json`, { 
+            status: "free", 
+            expired: expiredFormatted 
+        });
+        
+        await axios.put(`${FIREBASE_URL}/free_claims/${deviceId}.json`, { 
+            last_claimed: now.toISOString(),
+            token: tokenFreeName,
+            expired: expiredFormatted
+        });
 
-        return res.json({ success: true, token: tokenFreeName, expired: expiredFormatted });
+        return res.json({ 
+            success: true, 
+            isAlreadyClaimed: false,
+            token: tokenFreeName, 
+            expired: expiredFormatted 
+        });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT);
