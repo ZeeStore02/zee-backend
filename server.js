@@ -163,6 +163,41 @@ app.post('/api/claim-free', async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 });
+// ENDPOINT AMBIL SEMUA KOMENTAR MEMBER
+app.get('/api/get-chats', async (req, res) => {
+    try {
+        const checkRes = await axios.get(`${FIREBASE_URL}/chats.json`);
+        if (checkRes.data) {
+            const chatArray = Object.values(checkRes.data);
+            const recentChats = chatArray.slice(-20); // Ambil 20 pesan terbaru
+            return res.json({ success: true, chats: recentChats });
+        }
+        return res.json({ success: true, chats: [] });
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Gagal mengambil pesan." });
+    }
+});
+
+// ENDPOINT KIRIM KOMENTAR MEMBER
+app.post('/api/send-chat', async (req, res) => {
+    const { name, message } = req.body;
+    if (!name || !message) return res.status(400).json({ success: false, message: "Lengkapi nama dan pesan!" });
+
+    try {
+        const timeFormatted = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        const chatId = Date.now();
+
+        await axios.put(`${FIREBASE_URL}/chats/${chatId}.json`, {
+            name: name.substring(0, 20),
+            message: message.substring(0, 150),
+            time: timeFormatted
+        });
+
+        return res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Gagal menyimpan pesan." });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT);
