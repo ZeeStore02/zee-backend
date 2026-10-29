@@ -43,26 +43,58 @@ app.post('/api/saweria-webhook', async (req, res) => {
     }
 });
 
-// ENDPOINT CEK TOKEN OTOMATIS
+// ENDPOINT CEK TOKEN OTOMATIS (DENGAN KUNCI DEVICE ID PERMANEN)
 app.post('/api/check-token', async (req, res) => {
-    const { buyerName } = req.body;
-    if (!buyerName) return res.status(400).json({ success: false, message: "Masukkan nama!" });
+    const { buyerName, deviceId } = req.body;
+    
+    if (!buyerName) return res.status(400).json({ success: false, message: "Masukkan nama pembeli!" });
+    if (!deviceId) return res.status(400).json({ success: false, message: "Device ID tidak terdeteksi!" });
 
     try {
         const cleanName = buyerName.trim().toLowerCase();
         const checkRes = await axios.get(`${FIREBASE_URL}/buyers/${cleanName}.json`);
         
-        if (checkRes.data && checkRes.data.token) {
+        // 1. Cek Apakah Transaksi Ada di Firebase
+        if (!checkRes.data || !checkRes.data.token) {
+            return res.status(404).json({ 
+                success: false, 
+                message: "Token belum ditemukan. Pastikan pembayaran Saweria sudah lunas dan nama sesuai!" 
+            });
+        }
+
+        const buyerData = checkRes.data;
+
+        // 2. Jika Token Belum Terikat ke Device ID Mana Pun (Klaim Pertama Kali)
+        if (!buyerData.deviceId) {
+            // Ikat Device ID HP saat ini ke database Firebase
+            await axios.patch(`${FIREBASE_URL}/buyers/${cleanName}.json`, {
+                deviceId: deviceId
+            });
+
             return res.json({
                 success: true,
-                token: checkRes.data.token,
-                expired: checkRes.data.expired
+                token: buyerData.token,
+                expired: buyerData.expired
+            });
+        }
+
+        // 3. Jika Sudah Terikat, Cocokkan Device ID
+        if (buyerData.deviceId === deviceId) {
+            return res.json({
+                success: true,
+                token: buyerData.token,
+                expired: buyerData.expired
             });
         } else {
-            return res.status(404).json({ success: false, message: "Token belum ditemukan. Pastikan pembayaran Saweria sudah lunas!" });
+            // Jika Device ID Berbeda (Ada Orang Lain Mau Curi Token / Menebak Nama)
+            return res.status(403).json({ 
+                success: false, 
+                message: "Akses Ditolak! Nama pembeli ini sudah terikat pada perangkat lain." 
+            });
         }
+
     } catch (err) {
-        res.status(500).json({ success: false, message: "Gagal cek database." });
+        res.status(500).json({ success: false, message: "Gagal terhubung ke database." });
     }
 });
 
@@ -79,15 +111,13 @@ app.post('/api/claim-free', async (req, res) => {
         if (checkRes.data && checkRes.data.last_claimed) {
             const diffDays = Math.floor((now - new Date(checkRes.data.last_claimed)) / (1000 * 60 * 60 * 24));
             
-            if (diffDays < 30) { // Batas klaim tetap 30 hari
+            if (diffDays < 30) {
                 let savedTokenName = checkRes.data.token || savedToken;
                 let savedExpired = checkRes.data.expired;
 
-                // Jika data token lama belum ada, buatkan otomatis
                 if (!savedTokenName) {
                     savedTokenName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 7).toUpperCase();
                     
-                    // Hitung expired 12 hari dari saat pertama kali klaim
                     const expDate = new Date(checkRes.data.last_claimed);
                     expDate.setDate(expDate.getDate() + 12);
                     savedExpired = expDate.toISOString().split('T')[0];
@@ -108,7 +138,7 @@ app.post('/api/claim-free', async (req, res) => {
 
         // 2. KLAIM BARU (MASA AKTIF TOKEN 12 HARI)
         const expDate = new Date();
-        expDate.setDate(expDate.getDate() + 12); // Token aktif 12 hari
+        expDate.setDate(expDate.getDate() + 12);
         const expiredFormatted = expDate.toISOString().split('T')[0];
         const tokenFreeName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 7).toUpperCase();
 
