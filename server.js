@@ -181,26 +181,42 @@ app.get('/api/get-chats', async (req, res) => {
     }
 });
 
-// ENDPOINT KIRIM KOMENTAR MEMBER (DENGAN DUKUNGAN INPUT GAMBAR)
+// ENDPOINT KIRIM KOMENTAR MEMBER (TANGGAL & JAM WIB)
 app.post('/api/send-chat', async (req, res) => {
     const { name, message, image } = req.body;
     
-    // Minimal harus ada teks ATAU foto yang dikirim
     if (!name || (!message && !image)) {
         return res.status(400).json({ success: false, message: "Lengkapi nama dan pesan/foto!" });
     }
 
     try {
-        const timeFormatted = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        // AMBIL JAM & TANGGAL SESUAI ZONA WAKTU WIB (ASIA/JAKARTA)
+        const now = new Date();
+        
+        const dateFormatted = now.toLocaleDateString('id-ID', {
+            timeZone: 'Asia/Jakarta',
+            day: '2-digit',
+            month: 'short'
+        }); // Hasil contoh: "30 Okt"
+
+        const timeFormatted = now.toLocaleTimeString('id-ID', { 
+            timeZone: 'Asia/Jakarta',
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false
+        }); // Hasil contoh: "09.20"
+
+        // GABUNGKAN TANGGAL DAN JAM
+        const fullTimeFormat = `${dateFormatted}, ${timeFormatted}`; // Hasil: "30 Okt, 09.20"
+
         const chatId = Date.now();
 
         const payload = {
             name: name.substring(0, 20),
             message: message ? message.substring(0, 150) : "",
-            time: timeFormatted
+            time: fullTimeFormat
         };
 
-        // Jika ada foto, sertakan data foto base64
         if (image) {
             payload.image = image;
         }
@@ -212,6 +228,7 @@ app.post('/api/send-chat', async (req, res) => {
         res.status(500).json({ success: false, message: "Gagal menyimpan pesan." });
     }
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT);
