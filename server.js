@@ -4,8 +4,10 @@ const cors = require('cors');
 const app = express();
 
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// TAMBAHKAN LIMIT 5MB DI SINI AGAR BISA TERIMA FOTO BASE64 DARI FRONTEND
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
 const FIREBASE_URL = "https://token-pengguna-default-rtdb.asia-southeast1.firebasedatabase.app";
 
@@ -163,6 +165,7 @@ app.post('/api/claim-free', async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 });
+
 // ENDPOINT AMBIL SEMUA KOMENTAR MEMBER
 app.get('/api/get-chats', async (req, res) => {
     try {
@@ -178,20 +181,31 @@ app.get('/api/get-chats', async (req, res) => {
     }
 });
 
-// ENDPOINT KIRIM KOMENTAR MEMBER
+// ENDPOINT KIRIM KOMENTAR MEMBER (DENGAN DUKUNGAN INPUT GAMBAR)
 app.post('/api/send-chat', async (req, res) => {
-    const { name, message } = req.body;
-    if (!name || !message) return res.status(400).json({ success: false, message: "Lengkapi nama dan pesan!" });
+    const { name, message, image } = req.body;
+    
+    // Minimal harus ada teks ATAU foto yang dikirim
+    if (!name || (!message && !image)) {
+        return res.status(400).json({ success: false, message: "Lengkapi nama dan pesan/foto!" });
+    }
 
     try {
         const timeFormatted = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
         const chatId = Date.now();
 
-        await axios.put(`${FIREBASE_URL}/chats/${chatId}.json`, {
+        const payload = {
             name: name.substring(0, 20),
-            message: message.substring(0, 150),
+            message: message ? message.substring(0, 150) : "",
             time: timeFormatted
-        });
+        };
+
+        // Jika ada foto, sertakan data foto base64
+        if (image) {
+            payload.image = image;
+        }
+
+        await axios.put(`${FIREBASE_URL}/chats/${chatId}.json`, payload);
 
         return res.json({ success: true });
     } catch (err) {
