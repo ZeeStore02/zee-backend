@@ -100,30 +100,33 @@ app.post('/api/check-token', async (req, res) => {
     }
 });
 
-// ENDPOINT KLAIM FREE (Masa Aktif Token 12 Hari, Batas Klaim 30 Hari)
+// ENDPOINT KLAIM FREE (Fixed Token Konsisten)
 app.post('/api/claim-free', async (req, res) => {
-    const { deviceId, savedToken } = req.body;
+    const { deviceId } = req.body;
     if (!deviceId) return res.status(400).json({ success: false, message: "Device ID tidak ditemukan!" });
 
     try {
         const checkRes = await axios.get(`${FIREBASE_URL}/free_claims/${deviceId}.json`);
         const now = new Date();
 
-        // 1. CEK BATASAN KLAIM 1X SEBULAN (30 HARI)
+        // 1. CEK BAHWA PERANGKAT SUDAH PERNAH KLAIM & BATAS 30 HARI
         if (checkRes.data && checkRes.data.last_claimed) {
-            const diffDays = Math.floor((now - new Date(checkRes.data.last_claimed)) / (1000 * 60 * 60 * 24));
+            const lastClaimedDate = new Date(checkRes.data.last_claimed);
+            const diffDays = Math.floor((now - lastClaimedDate) / (1000 * 60 * 60 * 24));
             
+            // Jika belum lewat 30 hari -> KEMBALIKAN TOKEN LAMA (JANGAN BUAT TOKEN BARU)
             if (diffDays < 30) {
-                let savedTokenName = checkRes.data.token || savedToken;
+                let savedTokenName = checkRes.data.token;
                 let savedExpired = checkRes.data.expired;
 
+                // Jika karena satu hal data token lama belum ada di DB, buat sekali & langsung simpan permanen
                 if (!savedTokenName) {
                     savedTokenName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 7).toUpperCase();
-                    
-                    const expDate = new Date(checkRes.data.last_claimed);
+                    const expDate = new Date(lastClaimedDate);
                     expDate.setDate(expDate.getDate() + 12);
                     savedExpired = expDate.toISOString().split('T')[0];
 
+                    // Simpan token ini ke Firebase agar tidak berubah lagi
                     await axios.put(`${FIREBASE_URL}/tokens/${savedTokenName}.json`, { status: "free", expired: savedExpired });
                     await axios.patch(`${FIREBASE_URL}/free_claims/${deviceId}.json`, { token: savedTokenName, expired: savedExpired });
                 }
@@ -138,17 +141,19 @@ app.post('/api/claim-free', async (req, res) => {
             }
         }
 
-        // 2. KLAIM BARU (MASA AKTIF TOKEN 12 HARI)
+        // 2. KLAIM BARU (JIKA BELUM PERNAH KLAIM ATAU SUDAH > 30 HARI)
         const expDate = new Date();
         expDate.setDate(expDate.getDate() + 12);
         const expiredFormatted = expDate.toISOString().split('T')[0];
         const tokenFreeName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 7).toUpperCase();
 
+        // Simpan token ke node global /tokens
         await axios.put(`${FIREBASE_URL}/tokens/${tokenFreeName}.json`, { 
             status: "free", 
             expired: expiredFormatted 
         });
         
+        // Simpan riwayat klaim & token ke node /free_claims/{deviceId}
         await axios.put(`${FIREBASE_URL}/free_claims/${deviceId}.json`, { 
             last_claimed: now.toISOString(),
             token: tokenFreeName,
@@ -165,6 +170,7 @@ app.post('/api/claim-free', async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 });
+
 
 // ENDPOINT AMBIL SEMUA KOMENTAR MEMBER
 app.get('/api/get-chats', async (req, res) => {
