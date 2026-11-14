@@ -5,11 +5,17 @@ const app = express();
 
 app.use(cors());
 
-// TAMBAHKAN LIMIT 5MB DI SINI AGAR BISA TERIMA FOTO BASE64 DARI FRONTEND
+// LIMIT 5MB AGAR BISA TERIMA FOTO BASE64 DARI FRONTEND
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
-const FIREBASE_URL = "https://keypengguna-default-rtdb.asia-southeast1.firebasedatabase.app/";
+// Hapus garis miring di akhir agar tidak terjadi double slash (//)
+const FIREBASE_URL = "https://keypengguna-default-rtdb.asia-southeast1.firebasedatabase.app";
+
+// Bersihkan karakter yang dilarang Firebase (. $ # [ ] /)
+function sanitizeKey(str) {
+    return str.trim().toLowerCase().replace(/[.#$\[\]\/]/g, '_');
+}
 
 app.get('/', (req, res) => res.send("Server ZEE STORE Active"));
 
@@ -25,23 +31,25 @@ app.post('/api/saweria-webhook', async (req, res) => {
             expDate.setDate(expDate.getDate() + totalHari);
 
             const tokenName = "ZEE_P" + Math.random().toString(36).substring(2, 7).toUpperCase();
-            const cleanName = donator_name.trim().toLowerCase();
+            const cleanName = sanitizeKey(donator_name);
+            const expiredDateStr = expDate.toISOString().split('T')[0];
 
             // Simpan Token berdasarkan Nama Pembeli
             await axios.put(`${FIREBASE_URL}/buyers/${cleanName}.json`, {
                 token: tokenName,
                 status: "premium",
-                expired: expDate.toISOString().split('T')[0]
+                expired: expiredDateStr
             });
 
             await axios.put(`${FIREBASE_URL}/tokens/${tokenName}.json`, {
                 status: "premium",
-                expired: expDate.toISOString().split('T')[0]
+                expired: expiredDateStr
             });
         }
         return res.status(200).json({ status: "success" });
     } catch (error) {
-        return res.status(500).send("Error");
+        console.error("Webhook Error:", error.message);
+        return res.status(500).json({ status: "error", message: error.message });
     }
 });
 
@@ -53,7 +61,7 @@ app.post('/api/check-token', async (req, res) => {
     if (!deviceId) return res.status(400).json({ success: false, message: "Device ID tidak terdeteksi!" });
 
     try {
-        const cleanName = buyerName.trim().toLowerCase();
+        const cleanName = sanitizeKey(buyerName);
         const checkRes = await axios.get(`${FIREBASE_URL}/buyers/${cleanName}.json`);
         
         // 1. Cek Apakah Transaksi Ada di Firebase
@@ -68,7 +76,6 @@ app.post('/api/check-token', async (req, res) => {
 
         // 2. Jika Token Belum Terikat ke Device ID Mana Pun (Klaim Pertama Kali)
         if (!buyerData.deviceId) {
-            // Ikat Device ID HP saat ini ke database Firebase
             await axios.patch(`${FIREBASE_URL}/buyers/${cleanName}.json`, {
                 deviceId: deviceId
             });
@@ -88,7 +95,6 @@ app.post('/api/check-token', async (req, res) => {
                 expired: buyerData.expired
             });
         } else {
-            // Jika Device ID Berbeda (Ada Orang Lain Mau Curi Token / Menebak Nama)
             return res.status(403).json({ 
                 success: false, 
                 message: "Akses Ditolak! Nama pembeli ini sudah terikat pada perangkat lain." 
@@ -106,7 +112,8 @@ app.post('/api/claim-free', async (req, res) => {
     if (!deviceId) return res.status(400).json({ success: false, message: "Device ID tidak ditemukan!" });
 
     try {
-        const checkRes = await axios.get(`${FIREBASE_URL}/free_claims/${deviceId}.json`);
+        const cleanDeviceId = sanitizeKey(deviceId);
+        const checkRes = await axios.get(`${FIREBASE_URL}/free_claims/${cleanDeviceId}.json`);
         const now = new Date();
 
         // 1. CEK BAHWA PERANGKAT SUDAH PERNAH KLAIM & BATAS 30 HARI
@@ -114,21 +121,18 @@ app.post('/api/claim-free', async (req, res) => {
             const lastClaimedDate = new Date(checkRes.data.last_claimed);
             const diffDays = Math.floor((now - lastClaimedDate) / (1000 * 60 * 60 * 24));
             
-            // Jika belum lewat 30 hari -> KEMBALIKAN TOKEN LAMA (JANGAN BUAT TOKEN BARU)
             if (diffDays < 30) {
                 let savedTokenName = checkRes.data.token;
                 let savedExpired = checkRes.data.expired;
 
-                // Jika karena satu hal data token lama belum ada di DB, buat sekali & langsung simpan permanen
                 if (!savedTokenName) {
                     savedTokenName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 7).toUpperCase();
                     const expDate = new Date(lastClaimedDate);
                     expDate.setDate(expDate.getDate() + 12);
                     savedExpired = expDate.toISOString().split('T')[0];
 
-                    // Simpan token ini ke Firebase agar tidak berubah lagi
                     await axios.put(`${FIREBASE_URL}/tokens/${savedTokenName}.json`, { status: "free", expired: savedExpired });
-                    await axios.patch(`${FIREBASE_URL}/free_claims/${deviceId}.json`, { token: savedTokenName, expired: savedExpired });
+                    await axios.patch(`${FIREBASE_URL}/free_claims/${cleanDeviceId}.json`, { token: savedTokenName, expired: savedExpired });
                 }
 
                 return res.json({
@@ -147,14 +151,12 @@ app.post('/api/claim-free', async (req, res) => {
         const expiredFormatted = expDate.toISOString().split('T')[0];
         const tokenFreeName = "ZEE_FREE_" + Math.random().toString(36).substring(2, 7).toUpperCase();
 
-        // Simpan token ke node global /tokens
         await axios.put(`${FIREBASE_URL}/tokens/${tokenFreeName}.json`, { 
             status: "free", 
             expired: expiredFormatted 
         });
         
-        // Simpan riwayat klaim & token ke node /free_claims/{deviceId}
-        await axios.put(`${FIREBASE_URL}/free_claims/${deviceId}.json`, { 
+        await axios.put(`${FIREBASE_URL}/free_claims/${cleanDeviceId}.json`, { 
             last_claimed: now.toISOString(),
             token: tokenFreeName,
             expired: expiredFormatted
@@ -171,14 +173,13 @@ app.post('/api/claim-free', async (req, res) => {
     }
 });
 
-
 // ENDPOINT AMBIL SEMUA KOMENTAR MEMBER
 app.get('/api/get-chats', async (req, res) => {
     try {
         const checkRes = await axios.get(`${FIREBASE_URL}/chats.json`);
         if (checkRes.data) {
             const chatArray = Object.values(checkRes.data);
-            const recentChats = chatArray.slice(-20); // Ambil 20 pesan terbaru
+            const recentChats = chatArray.slice(-20);
             return res.json({ success: true, chats: recentChats });
         }
         return res.json({ success: true, chats: [] });
@@ -196,25 +197,22 @@ app.post('/api/send-chat', async (req, res) => {
     }
 
     try {
-        // AMBIL JAM & TANGGAL SESUAI ZONA WAKTU WIB (ASIA/JAKARTA)
         const now = new Date();
         
         const dateFormatted = now.toLocaleDateString('id-ID', {
             timeZone: 'Asia/Jakarta',
             day: '2-digit',
             month: 'short'
-        }); // Hasil contoh: "30 Okt"
+        });
 
         const timeFormatted = now.toLocaleTimeString('id-ID', { 
             timeZone: 'Asia/Jakarta',
             hour: '2-digit', 
             minute: '2-digit',
             hour12: false
-        }); // Hasil contoh: "09.20"
+        });
 
-        // GABUNGKAN TANGGAL DAN JAM
-        const fullTimeFormat = `${dateFormatted}, ${timeFormatted}`; // Hasil: "30 Okt, 09.20"
-
+        const fullTimeFormat = `${dateFormatted}, ${timeFormatted}`;
         const chatId = Date.now();
 
         const payload = {
@@ -235,6 +233,10 @@ app.post('/api/send-chat', async (req, res) => {
     }
 });
 
+// Kompatibel untuk Vercel Serverless & Localhost
+if (require.main === module) {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => console.log(`Server berjalan di port ${PORT}`));
+}
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT);
+module.exports = app;
