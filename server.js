@@ -9,7 +9,7 @@ app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
-const FIREBASE_URL = "https://token-pengguna-default-rtdb.asia-southeast1.firebasedatabase.app";
+const FIREBASE_URL = "https://keypengguna-default-rtdb.asia-southeast1.firebasedatabase.app/";
 
 app.get('/', (req, res) => res.send("Server ZEE STORE Active"));
 
